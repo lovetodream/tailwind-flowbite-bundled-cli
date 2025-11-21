@@ -411,17 +411,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update release version in build files
-        run: |
-          source utils/bash_functions.sh
-          new_version="${{ steps.semver.outputs.nextStrict }}"
-          git commit -am "chore: bumped release version to ${new_version}"
-          git push
-
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.semver.outputs.next }}" \
             --notes-file CHANGELOG.md \
-            tailwindcss-flowbite-*
+            tailwindcss-flowbite/*
