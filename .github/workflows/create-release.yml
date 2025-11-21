@@ -2,6 +2,8 @@ name: Create a new release
 on:
   workflow_call:
   workflow_dispatch:
+permissions:
+  contents: write
 
 env:
   APP_NAME: tailwindcss-oxide
