@@ -421,5 +421,5 @@ jobs:
           gh release create "${{ steps.semver.outputs.next }}" \
             --notes-file CHANGELOG.md \
             tailwindcss-flowbite/dist/* \
-            node_modules/flowbite/src/themes/* \
-            node_modules/flowbite/dist/flowbite.min.*
+            tailwindcss-flowbite/node_modules/flowbite/src/themes/* \
+            tailwindcss-flowbite/node_modules/flowbite/dist/flowbite.min.*
