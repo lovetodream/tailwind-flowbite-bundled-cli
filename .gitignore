@@ -1,0 +1,4 @@
+/test/tailwindcss-flowbite
+/dist
+/node_modules
+.DS_Store

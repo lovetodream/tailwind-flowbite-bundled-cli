@@ -359,6 +359,7 @@ jobs:
         run: |
           mv ../dist/tailwindcss-flowbite-linux-x64 tailwindcss-flowbite
           chmod +x tailwindcss-flowbite
+          ./tailwindcss-flowbite
           ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep bg-brand-softer || exit 1
           ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep fill-brand || exit 1
           ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep animate-spin || exit 1
@@ -423,38 +424,3 @@ jobs:
           gh release create "${{ steps.semver.outputs.next }}" \
             --notes-file CHANGELOG.md \
             tailwindcss-flowbite-*
-
-  # Create and publish a snap package
-  create-snap-release:
-    runs-on: ubuntu-latest
-    needs: create-github-release
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.GITHUB_REF }}
-          fetch-depth: 0
-
-      - name: Get latest changes # workaround (see above)
-        run: |
-          RELEASE_BRANCH="${GITHUB_REF##*[refs, heads, tags]/}"
-          git checkout $RELEASE_BRANCH
-          git pull
-
-      - name: Build snap package
-        id: snapcraft
-        uses: canonical/action-build@v1
-
-      - name: Test snap
-        run: |
-          sudo snap install --dangerous ${{ steps.snapcraft.outputs.snap }}
-          cd test
-          tailwindcss-flowbite --input input.css --content flowbite-components.html | grep badge-primary || exit 1
-
-      - name: Publish snap
-        uses: canonical/action-publish@v1
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
-        with:
-          snap: ${{ steps.snapcraft.outputs.snap }}
-          release: stable
