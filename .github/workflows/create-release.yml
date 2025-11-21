@@ -389,6 +389,7 @@ jobs:
         with:
           token: ${{ github.token }}
           branch: ${{ env.RELEASE_BRANCH }}
+          fallbackTag: "v0.1.0"
 
       - name: Create changelog
         run: |
