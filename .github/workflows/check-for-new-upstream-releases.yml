@@ -1,119 +1,119 @@
 name: Check for new upstream releases
 on:
-    workflow_dispatch:
-    schedule:
-        - cron: "0 */6 * * *" # 4 times a day
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *" # 4 times a day
 permissions:
-    contents: write
+  contents: write
 
 concurrency:
-    group: ${{ github.workflow }}
+  group: ${{ github.workflow }}
 
 env:
-    LOCK_REASON: ${{ vars.WORKFLOW_LOCK_REASON }}
+  LOCK_REASON: ${{ vars.WORKFLOW_LOCK_REASON }}
 
 jobs:
-    # Check for new upstream releases
-    check:
-        runs-on: ubuntu-latest
-        outputs:
-            release-tailwind: ${{ steps.check-tailwind.outputs.release }}
-            release-daisyui: ${{ steps.check-daisyui.outputs.release }}
-        steps:
-            - name: Check if workflow is locked
-              run: |
-                  if [ -n "$LOCK_REASON" ]; then
-                    echo "## :lock: Workflow is locked!" >> $GITHUB_STEP_SUMMARY
-                    echo "Will not check for new upstream releases." >> $GITHUB_STEP_SUMMARY
-                    echo "### Reason" >> $GITHUB_STEP_SUMMARY
-                    echo "$LOCK_REASON" >> $GITHUB_STEP_SUMMARY
-                    # cancel the workflow run
-                    gh run cancel --repo ${{ github.repository }} ${{ github.run_id }}
-                    sleep 10
-                    exit 1
-                  fi
-              env:
-                  GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
+  # Check for new upstream releases
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      release-tailwind: ${{ steps.check-tailwind.outputs.release }}
+      release-daisyui: ${{ steps.check-daisyui.outputs.release }}
+    steps:
+      - name: Check if workflow is locked
+        run: |
+          if [ -n "$LOCK_REASON" ]; then
+            echo "## :lock: Workflow is locked!" >> $GITHUB_STEP_SUMMARY
+            echo "Will not check for new upstream releases." >> $GITHUB_STEP_SUMMARY
+            echo "### Reason" >> $GITHUB_STEP_SUMMARY
+            echo "$LOCK_REASON" >> $GITHUB_STEP_SUMMARY
+            # cancel the workflow run
+            gh run cancel --repo ${{ github.repository }} ${{ github.run_id }}
+            sleep 10
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
 
-            - name: Checkout source code
-              uses: actions/checkout@v4
-              with:
-                  ref: ${{ env.GITHUB_REF }}
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GITHUB_REF }}
 
-            - name: Load properties file
-              run: |
-                  while read -r property; do
-                      [[ -n "$property" && "$property" != [[:blank:]#]* ]] && echo "$property" >> $GITHUB_ENV
-                  done < properties.env
+      - name: Load properties file
+        run: |
+          while read -r property; do
+              [[ -n "$property" && "$property" != [[:blank:]#]* ]] && echo "$property" >> $GITHUB_ENV
+          done < properties.env
 
-            - name: Validate repository properties
-              run: |
-                  source utils/bash_functions.sh
-                  check_variable TAILWIND_REPOSITORY
-                  check_variable FLOWBITE_REPOSITORY
+      - name: Validate repository properties
+        run: |
+          source utils/bash_functions.sh
+          check_variable TAILWIND_REPOSITORY
+          check_variable FLOWBITE_REPOSITORY
 
-            - name: Get Tailwind CSS version
-              run: |
-                  echo "TAILWIND_LATEST_VERSION=$(curl -s https://api.github.com/repos/$TAILWIND_REPOSITORY/releases/latest \
-                  | jq -r '.tag_name[1:]')" >> $GITHUB_ENV
+      - name: Get Tailwind CSS version
+        run: |
+          echo "TAILWIND_LATEST_VERSION=$(curl -s https://api.github.com/repos/$TAILWIND_REPOSITORY/releases/latest \
+          | jq -r '.tag_name[1:]')" >> $GITHUB_ENV
 
-            - name: Get Flowbite version
-              run: |
-                  echo "FLOWBITE_LATEST_VERSION=$(curl -s https://api.github.com/repos/$FLOWBITE_REPOSITORY/releases/latest \
-                  | jq -r '.tag_name[1:]')" >> $GITHUB_ENV
+      - name: Get Flowbite version
+        run: |
+          echo "FLOWBITE_LATEST_VERSION=$(curl -s https://api.github.com/repos/$FLOWBITE_REPOSITORY/releases/latest \
+          | jq -r '.tag_name[1:]')" >> $GITHUB_ENV
 
-            - name: Validate version properties
-              run: |
-                  source utils/bash_functions.sh
-                  check_variable TAILWIND_CURRENT_VERSION
-                  check_variable TAILWIND_LATEST_VERSION
-                  check_variable FLOWBITE_CURRENT_VERSION
-                  check_variable FLOWBITE_LATEST_VERSION
+      - name: Validate version properties
+        run: |
+          source utils/bash_functions.sh
+          check_variable TAILWIND_CURRENT_VERSION
+          check_variable TAILWIND_LATEST_VERSION
+          check_variable FLOWBITE_CURRENT_VERSION
+          check_variable FLOWBITE_LATEST_VERSION
 
-            - name: Configure Git committer identity
-              run: |
-                  git config --global user.name "GitHub Actions"
-                  git config --global user.email "<>"
+      - name: Configure Git committer identity
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "<>"
 
-            - name: Check if Tailwind CSS was released
-              id: check-tailwind
-              run: |
-                  source utils/bash_functions.sh
-                  compare_versions tailwind $TAILWIND_CURRENT_VERSION $TAILWIND_LATEST_VERSION
-                  if [ "$TAILWIND_VERSION_CHANGED" = "true" ]; then
-                    sed -i "s/TAILWIND_CURRENT_VERSION=.*/TAILWIND_CURRENT_VERSION=$TAILWIND_LATEST_VERSION/g" properties.env
-                    sed -i -e "/tailwindcss/ s/$TAILWIND_CURRENT_VERSION/$TAILWIND_LATEST_VERSION/g" readme.md
-                    COMMIT_TYPE="$(semver_increment_to_conventional_commit_type $TAILWIND_VERSION_CHANGE_LEVEL)"
-                    git commit -am "${COMMIT_TYPE}: bump Tailwind CSS version to $TAILWIND_LATEST_VERSION ($TAILWIND_VERSION_CHANGE_LEVEL)"
-                    git push
-                    echo "release=true" >> $GITHUB_OUTPUT
-                  fi
+      - name: Check if Tailwind CSS was released
+        id: check-tailwind
+        run: |
+          source utils/bash_functions.sh
+          compare_versions tailwind $TAILWIND_CURRENT_VERSION $TAILWIND_LATEST_VERSION
+          if [ "$TAILWIND_VERSION_CHANGED" = "true" ]; then
+            sed -i "s/TAILWIND_CURRENT_VERSION=.*/TAILWIND_CURRENT_VERSION=$TAILWIND_LATEST_VERSION/g" properties.env
+            sed -i -e "/tailwindcss/ s/$TAILWIND_CURRENT_VERSION/$TAILWIND_LATEST_VERSION/g" README.md
+            COMMIT_TYPE="$(semver_increment_to_conventional_commit_type $TAILWIND_VERSION_CHANGE_LEVEL)"
+            git commit -am "${COMMIT_TYPE}: bump Tailwind CSS version to $TAILWIND_LATEST_VERSION ($TAILWIND_VERSION_CHANGE_LEVEL)"
+            git push
+            echo "release=true" >> $GITHUB_OUTPUT
+          fi
 
-            - name: Check if Flowbite was released
-              id: check-flowbite
-              run: |
-                  source utils/bash_functions.sh
-                  compare_versions flowbite $FLOWBITE_CURRENT_VERSION $FLOWBITE_LATEST_VERSION
-                  if [ "$FLOWBITE_VERSION_CHANGED" = "true" ]; then
-                    sed -i "s/FLOWBITE_CURRENT_VERSION=.*/FLOWBITE_CURRENT_VERSION=$FLOWBITE_LATEST_VERSION/g" properties.env
-                    sed -i -e "/flowbite/ s/$FLOWBITE_CURRENT_VERSION/$FLOWBITE_LATEST_VERSION/g" readme.md
-                    COMMIT_TYPE="$(semver_increment_to_conventional_commit_type $FLOWBITE_VERSION_CHANGE_LEVEL)"
-                    git commit -am "${COMMIT_TYPE}: bump flowbite version to $FLOWBITE_LATEST_VERSION ($FLOWBITE_VERSION_CHANGE_LEVEL)"
-                    git push
-                    echo "release=true" >> $GITHUB_OUTPUT
-                  fi
+      - name: Check if Flowbite was released
+        id: check-flowbite
+        run: |
+          source utils/bash_functions.sh
+          compare_versions flowbite $FLOWBITE_CURRENT_VERSION $FLOWBITE_LATEST_VERSION
+          if [ "$FLOWBITE_VERSION_CHANGED" = "true" ]; then
+            sed -i "s/FLOWBITE_CURRENT_VERSION=.*/FLOWBITE_CURRENT_VERSION=$FLOWBITE_LATEST_VERSION/g" properties.env
+            sed -i -e "/flowbite/ s/$FLOWBITE_CURRENT_VERSION/$FLOWBITE_LATEST_VERSION/g" README.md
+            COMMIT_TYPE="$(semver_increment_to_conventional_commit_type $FLOWBITE_VERSION_CHANGE_LEVEL)"
+            git commit -am "${COMMIT_TYPE}: bump flowbite version to $FLOWBITE_LATEST_VERSION ($FLOWBITE_VERSION_CHANGE_LEVEL)"
+            git push
+            echo "release=true" >> $GITHUB_OUTPUT
+          fi
 
-            - name: Add versions to summary
-              run: |
-                  echo "## :page_facing_up: Versions " >> $GITHUB_STEP_SUMMARY
-                  echo "| | Used | Latest |" >> $GITHUB_STEP_SUMMARY
-                  echo "| --- | --- | --- |" >> $GITHUB_STEP_SUMMARY
-                  echo "| Tailwind CSS | $TAILWIND_CURRENT_VERSION | $TAILWIND_LATEST_VERSION |" >> $GITHUB_STEP_SUMMARY
-                  echo "| Flowbite | $FLOWBITE_CURRENT_VERSION | $FLOWBITE_LATEST_VERSION |" >> $GITHUB_STEP_SUMMARY
+      - name: Add versions to summary
+        run: |
+          echo "## :page_facing_up: Versions " >> $GITHUB_STEP_SUMMARY
+          echo "| | Used | Latest |" >> $GITHUB_STEP_SUMMARY
+          echo "| --- | --- | --- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tailwind CSS | $TAILWIND_CURRENT_VERSION | $TAILWIND_LATEST_VERSION |" >> $GITHUB_STEP_SUMMARY
+          echo "| Flowbite | $FLOWBITE_CURRENT_VERSION | $FLOWBITE_LATEST_VERSION |" >> $GITHUB_STEP_SUMMARY
 
-    # Trigger the release workflow
-    release:
-        needs: check
-        if: ${{ needs.check.outputs.release-tailwind == 'true' || needs.check.outputs.release-daisyui == 'true' }}
-        uses: ./.github/workflows/create-release.yml
-        secrets: inherit
+  # Trigger the release workflow
+  release:
+    needs: check
+    if: ${{ needs.check.outputs.release-tailwind == 'true' || needs.check.outputs.release-daisyui == 'true' }}
+    uses: ./.github/workflows/create-release.yml
+    secrets: inherit
