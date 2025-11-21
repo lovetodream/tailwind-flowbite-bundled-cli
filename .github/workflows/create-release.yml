@@ -1,0 +1,460 @@
+name: Create a new release
+on:
+  workflow_call:
+  workflow_dispatch:
+
+env:
+  APP_NAME: tailwindcss-oxide
+  NODE_VERSION: 20
+  OXIDE_LOCATION: ./crates/node
+
+jobs:
+  # Checks for changes to Tailwind CSS build files and exports variables needed by other jobs
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tailwind-repository: ${{ steps.export.outputs.tailwind-repository }}
+      tailwind-version: ${{ steps.export.outputs.tailwind-version }}
+      flowbite-version: ${{ steps.export.outputs.flowbite-version }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GITHUB_REF }}
+
+      - name: Get latest changes # workaround to get the commits just pushed by the calling workflow 🤨
+        run: |
+          git fetch
+          git checkout ${GITHUB_REF##*[refs, heads, tags]/}
+          git pull
+
+      - name: Load properties file
+        run: |
+          while read -r property; do
+              [[ -n "$property" && "$property" != [[:blank:]#]* ]] && echo "$property" >> $GITHUB_ENV
+          done < properties.env
+
+      - name: Validate properties
+        run: |
+          source utils/bash_functions.sh
+          check_variable TAILWIND_REPOSITORY
+          check_variable TAILWIND_CURRENT_INDEX_TS_CHECKSUM
+          check_variable TAILWIND_CURRENT_RELEASE_WORKFLOW_CHECKSUM
+          check_version_number $TAILWIND_CURRENT_VERSION
+
+      - name: Checkout Tailwind CSS source code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAILWIND_REPOSITORY }}
+          ref: v${{ env.TAILWIND_CURRENT_VERSION }}
+          path: "tailwindcss"
+
+      - name: Check for important build file changes
+        run: |
+          TAILWIND_LATEST_INDEX_PATH="packages/@tailwindcss-standalone/src/index.ts"
+          TAILWIND_LATEST_INDEX_TS_CHECKSUM=$(sha256sum tailwindcss/$TAILWIND_LATEST_INDEX_PATH | awk '{print $1}')
+          TAILWIND_LATEST_RELEASE_WORKFLOW_PATH=".github/workflows/prepare-release.yml"
+          TAILWIND_LATEST_RELEASE_WORKFLOW_CHECKSUM=$(sha256sum tailwindcss/$TAILWIND_LATEST_RELEASE_WORKFLOW_PATH | awk '{print $1}')
+          if [ "$TAILWIND_CURRENT_INDEX_TS_CHECKSUM" != "$TAILWIND_LATEST_INDEX_TS_CHECKSUM" ]; then
+            FILENAME="$TAILWIND_LATEST_INDEX_PATH"
+            NEW_CHECKSUM="$TAILWIND_LATEST_INDEX_TS_CHECKSUM"
+          elif [ "$TAILWIND_CURRENT_RELEASE_WORKFLOW_CHECKSUM" != "$TAILWIND_LATEST_RELEASE_WORKFLOW_CHECKSUM" ]; then
+            FILENAME="$TAILWIND_LATEST_RELEASE_WORKFLOW_PATH"
+            NEW_CHECKSUM="$TAILWIND_LATEST_RELEASE_WORKFLOW_CHECKSUM"
+          else
+            FILENAME=""
+          fi
+          # Create a lock and cancel the run if any of the files we care about have changed and require manual verification.
+          if [ -n "$FILENAME" ]; then
+            echo "## :eyes: Manual verification required " >> $GITHUB_STEP_SUMMARY
+            printf -v MESSAGE '%s' \
+                "File <code>$FILENAME</code> has been updated in Tailwind CSS repository for release <code>$TAILWIND_CURRENT_VERSION</code>. " \
+                "New checksum: <code>$NEW_CHECKSUM</code>.<br/>" \
+                "Please check if changes to this file require adjustments to the Release Workflow " \
+                "and update its current checksum in <code>properties.env</code>."
+            echo "$MESSAGE" >> $GITHUB_STEP_SUMMARY
+            gh variable set WORKFLOW_LOCK_REASON --body "$MESSAGE"
+            gh run cancel --repo ${{ github.repository }} ${{ github.run_id }}
+            sleep 10
+            exit 1
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
+
+      - name: Export variables
+        id: export
+        run: |
+          echo "tailwind-repository=$TAILWIND_REPOSITORY" >> $GITHUB_OUTPUT
+          echo "tailwind-version=$TAILWIND_CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "flowbite-version=$FLOWBITE_CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+  build:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          # Windows
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          #- os: windows-latest
+          #  target: aarch64-pc-windows-msvc
+          # macOS
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            strip: strip -x # Must use -x on macOS. This produces larger results on linux.
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            page-size: 14
+            strip: strip -x # Must use -x on macOS. This produces larger results on linux.
+          ## Android
+          #- os: ubuntu-latest
+          #  target: aarch64-linux-android
+          #  strip: ${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+          #- os: ubuntu-latest
+          #  target: armv7-linux-androideabi
+          #  strip: ${ANDROID_NDK_LATEST_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+          # Linux
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            strip: strip
+            container:
+              image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            strip: llvm-strip
+            container:
+              image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-aarch64
+          #- os: ubuntu-latest
+          #  target: armv7-unknown-linux-gnueabihf
+          #  strip: llvm-strip
+          #  container:
+          #    image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-zig
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            strip: aarch64-linux-musl-strip
+            download: true
+            container:
+              image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            strip: strip
+            download: true
+            container:
+              image: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.prepare.outputs.tailwind-repository }}
+          ref: v${{ needs.prepare.outputs.tailwind-version }}
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+
+      - name: Install gcc-arm-linux-gnueabihf
+        if: ${{ matrix.target == 'armv7-unknown-linux-gnueabihf' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf -y
+
+      # Cargo already skips downloading dependencies if they already exist
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Cache the `oxide` Rust build
+      - name: Cache oxide build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./crates/node/*.node
+            ./crates/node/*.wasm
+            ./crates/node/index.d.ts
+            ./crates/node/index.js
+            ./crates/node/browser.js
+            ./crates/node/tailwindcss-oxide.wasi-browser.js
+            ./crates/node/tailwindcss-oxide.wasi.cjs
+            ./crates/node/wasi-worker-browser.mjs
+            ./crates/node/wasi-worker.mjs
+          key: ${{ runner.os }}-${{ matrix.target }}-oxide-${{ hashFiles('./crates/**/*') }}
+
+      - name: Install Node.JS
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Rust (Stable)
+        if: ${{ matrix.download }}
+        run: |
+          rustup default stable
+
+      - name: Setup rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install dependencies
+        run: pnpm install --ignore-scripts --filter=!./playgrounds/*
+
+      - name: Build release
+        run: pnpm run --filter ${{ env.OXIDE_LOCATION }} build:platform --target=${{ matrix.target }}
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+          JEMALLOC_SYS_WITH_LG_PAGE: ${{ matrix.page-size }}
+
+      - name: Strip debug symbols # https://github.com/rust-lang/rust/issues/46034
+        if: ${{ matrix.strip }}
+        run: ${{ matrix.strip }} ${{ env.OXIDE_LOCATION }}/*.node
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: ${{ env.OXIDE_LOCATION }}/*.node
+
+  package:
+    needs:
+      - prepare
+      - build
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.prepare.outputs.tailwind-repository }}
+          ref: v${{ needs.prepare.outputs.tailwind-version }}
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
+
+      # Cargo already skips downloading dependencies if they already exist
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Cache the `oxide` Rust build
+      - name: Cache oxide build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./crates/node/*.node
+            ./crates/node/*.wasm
+            ./crates/node/index.d.ts
+            ./crates/node/index.js
+            ./crates/node/browser.js
+            ./crates/node/tailwindcss-oxide.wasi-browser.js
+            ./crates/node/tailwindcss-oxide.wasi.cjs
+            ./crates/node/wasi-worker-browser.mjs
+            ./crates/node/wasi-worker.mjs
+          key: ${{ runner.os }}-${{ matrix.target }}-oxide-${{ hashFiles('./crates/**/*') }}
+
+      - name: Setup WASM target
+        run: rustup target add wasm32-wasip1-threads
+
+      - name: Install dependencies
+        run: pnpm --filter=!./playgrounds/* install
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.OXIDE_LOCATION }}
+
+      - name: Move artifacts
+        run: |
+          cd ${{ env.OXIDE_LOCATION }}
+          cp bindings-x86_64-pc-windows-msvc/* ./npm/win32-x64-msvc/
+          # cp bindings-aarch64-pc-windows-msvc/* ./npm/win32-arm64-msvc/
+          cp bindings-x86_64-apple-darwin/* ./npm/darwin-x64/
+          cp bindings-aarch64-apple-darwin/* ./npm/darwin-arm64/
+          # cp bindings-aarch64-linux-android/* ./npm/android-arm64/
+          # cp bindings-armv7-linux-androideabi/* ./npm/android-arm-eabi/
+          cp bindings-aarch64-unknown-linux-gnu/* ./npm/linux-arm64-gnu/
+          cp bindings-aarch64-unknown-linux-musl/* ./npm/linux-arm64-musl/
+          # cp bindings-armv7-unknown-linux-gnueabihf/* ./npm/linux-arm-gnueabihf/
+          cp bindings-x86_64-unknown-linux-gnu/* ./npm/linux-x64-gnu/
+          cp bindings-x86_64-unknown-linux-musl/* ./npm/linux-x64-musl/
+          # cp bindings-x86_64-unknown-freebsd/* ./npm/freebsd-x64/
+
+      - name: Add the Flowbite dependency
+        run: pnpm i -D flowbite@${{ needs.prepare.outputs.flowbite-version }}
+        working-directory: packages/@tailwindcss-standalone
+
+      - name: Add Flowbite to 'packages/@tailwindcss-standalone/src/index.ts'
+        run: |
+          curl -sL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref }}/patch/add-flowbite.patch" | git apply
+
+      - name: Build Tailwind CSS
+        run: pnpm run build
+        env:
+          FEATURES_ENV: stable
+
+      - name: Rename binaries
+        run: |
+          mv tailwindcss-linux-arm64 tailwindcss-flowbite-linux-arm64
+          mv tailwindcss-linux-arm64-musl tailwindcss-flowbite-linux-arm64-musl
+          mv tailwindcss-linux-x64 tailwindcss-flowbite-linux-x64
+          mv tailwindcss-linux-x64-musl tailwindcss-flowbite-linux-x64-musl
+          mv tailwindcss-macos-arm64 tailwindcss-flowbite-macos-arm64
+          mv tailwindcss-macos-x64 tailwindcss-flowbite-macos-x64
+          mv tailwindcss-windows-x64.exe tailwindcss-flowbite-windows-x64.exe
+        working-directory: packages/@tailwindcss-standalone/dist
+
+      - name: Save release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailwindcss-flowbite
+          path: |
+            packages/@tailwindcss-standalone/dist/tailwindcss-flowbite-*
+            packages/@tailwindcss-standalone/node_modules/flowbite/src/themes/*
+            packages/@tailwindcss-standalone/node_modules/flowbite/dist/flowbite.min.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test:
+    runs-on: ubuntu-latest
+    needs: package
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GITHUB_REF }}
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tailwindcss-flowbite
+          run-id: ${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test
+        run: |
+          mv ../tailwindcss-flowbite-linux-x64 tailwindcss-flowbite
+          chmod +x tailwindcss-flowbite
+          ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep bg-brand-softer || exit 1
+          ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep fill-brand || exit 1
+          ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep animate-spin || exit 1
+        working-directory: test
+
+  # Create a new GitHub release
+  create-github-release:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GITHUB_REF }}
+          fetch-depth: 0
+
+      - name: Get latest changes # workaround (see above)
+        run: |
+          RELEASE_BRANCH="${GITHUB_REF##*[refs, heads, tags]/}"
+          git checkout $RELEASE_BRANCH
+          git pull
+          echo "RELEASE_BRANCH=$RELEASE_BRANCH" >> $GITHUB_ENV
+
+      - name: Calculate next version
+        id: semver
+        uses: ietf-tools/semver-action@v1
+        with:
+          token: ${{ github.token }}
+          branch: ${{ env.RELEASE_BRANCH }}
+
+      - name: Create changelog
+        run: |
+          source utils/bash_functions.sh
+          print_changelog > CHANGELOG.md
+          print_version_table >> CHANGELOG.md
+          print_download_list "${{ steps.semver.outputs.next }}" >> CHANGELOG.md
+
+      - name: Configure Git committer identity
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "<>"
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tailwindcss-flowbite
+          run-id: ${{ github.run_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update release version in build files
+        run: |
+          source utils/bash_functions.sh
+          new_version="${{ steps.semver.outputs.nextStrict }}"
+          git commit -am "chore: bumped release version to ${new_version}"
+          git push
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.semver.outputs.next }}" \
+            --notes-file CHANGELOG.md \
+            tailwindcss-flowbite-*
+
+  # Create and publish a snap package
+  create-snap-release:
+    runs-on: ubuntu-latest
+    needs: create-github-release
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GITHUB_REF }}
+          fetch-depth: 0
+
+      - name: Get latest changes # workaround (see above)
+        run: |
+          RELEASE_BRANCH="${GITHUB_REF##*[refs, heads, tags]/}"
+          git checkout $RELEASE_BRANCH
+          git pull
+
+      - name: Build snap package
+        id: snapcraft
+        uses: canonical/action-build@v1
+
+      - name: Test snap
+        run: |
+          sudo snap install --dangerous ${{ steps.snapcraft.outputs.snap }}
+          cd test
+          tailwindcss-flowbite --input input.css --content flowbite-components.html | grep badge-primary || exit 1
+
+      - name: Publish snap
+        uses: canonical/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
+        with:
+          snap: ${{ steps.snapcraft.outputs.snap }}
+          release: stable
