@@ -408,6 +408,7 @@ jobs:
         with:
           name: tailwindcss-flowbite
           run-id: ${{ github.run_id }}
+          path: tailwindcss-flowbite
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
