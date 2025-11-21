@@ -357,7 +357,7 @@ jobs:
 
       - name: Test
         run: |
-          mv ../tailwindcss-flowbite-linux-x64 tailwindcss-flowbite
+          mv ../dist/tailwindcss-flowbite-linux-x64 tailwindcss-flowbite
           chmod +x tailwindcss-flowbite
           ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep bg-brand-softer || exit 1
           ./tailwindcss-flowbite --input input.css --content flowbite-components.html | grep fill-brand || exit 1
